@@ -1,0 +1,66 @@
+// # Command Alias and Macro Definition Guard
+//
+// Logline: Models command macros, validates identifier safety, and detects expansion cycles.
+//
+// Setup: Pure value type and validation routines. Zero ambient authority.
+//
+// Beats:
+//   1. Validate alias names preventing shell injections and invalid symbols.
+//   2. Model AliasDef with name, target expansion, scope, and safety posture.
+//   3. Detect cyclic recursion loops in alias resolution chains.
+
+pub type AliasDef = struct {
+    name: String,
+    target: String,
+    scope: String,
+    is_safe: Bool
+};
+
+pub fn is_valid_alias_name(name: String) -> Bool {
+    let trimmed: String = str_trim(name);
+    let n: Int = chars_len(trimmed);
+    if n == 0 || n > 64 { return false; }
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(trimmed, i);
+        let ok_char: Bool = (b >= 97 && b <= 122)
+            || (b >= 65 && b <= 90)
+            || (b >= 48 && b <= 57)
+            || (b == 95)
+            || (b == 45)
+            || (b == 46);
+        if !ok_char { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub fn is_safe_target(target: String) -> Bool {
+    let t: String = str_trim(target);
+    if chars_len(t) == 0 { return false; }
+    if str_contains(t, "rm -rf /") || str_contains(t, ":(){ :|:& };:") {
+        return false;
+    }
+    return true;
+}
+
+pub fn create_alias(name: String, target: String, scope: String) -> AliasDef {
+    let name_ok: Bool = is_valid_alias_name(name);
+    let target_ok: Bool = is_safe_target(target);
+    return AliasDef {
+        name: str_trim(name),
+        target: str_trim(target),
+        scope: if scope == "" { "session" } else { scope },
+        is_safe: name_ok && target_ok
+    };
+}
+
+pub fn check_cyclic(name: String, target: String) -> Bool {
+    let n: String = str_trim(name);
+    let t: String = str_trim(target);
+    if n == t { return true; }
+    if str_starts_with(t, n + " ") || str_ends_with(t, " " + n) || str_contains(t, " " + n + " ") {
+        return true;
+    }
+    return false;
+}

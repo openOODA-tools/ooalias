@@ -1,0 +1,109 @@
+// # MCP Stdio Server - Macro Resolver and Alias Engine
+//
+// Logline: Speaks Model Context Protocol over stdio for LLM coding agents.
+//
+// Setup: Requires FsReadCap. Dispatches alias_resolve, alias_list, and alias_verify tools.
+//
+// Beats:
+//   1. Handle initialize and notifications/initialized lifecycle handshakes.
+//   2. Advertise alias_resolve, alias_list, and alias_verify tools with JSON schemas.
+//   3. Dispatch tools/call requests and return expanded macro targets.
+
+import "core/alias_entry.oo";
+import "core/resolver.oo";
+import "ipc/json_field.oo";
+
+fn build_error(id: String, code: Int, msg: String) -> String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":" + to_string(code) + ",\"message\":\"" + json_escape(msg) + "\"}}";
+}
+
+fn build_tool_result(id: String, text: String) -> String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(text) + "\"}]}}";
+}
+
+fn handle_tool_call(fs: &FsReadCap, id: String, req: String) -> String {
+    let params: String = json_field_raw(req, "params");
+    let tool_name: String = json_field_string(params, "name");
+    let args: String = json_field_raw(params, "arguments");
+    let defaults: List[AliasDef] = get_default_aliases();
+
+    if tool_name == "alias_resolve" {
+        let cmd: String = json_field_string(args, "command");
+        let resolved: String = resolve_macro(cmd, defaults);
+        return build_tool_result(id, resolved);
+    }
+
+    if tool_name == "alias_list" {
+        let out: String = format_alias_table(defaults);
+        return build_tool_result(id, out);
+    }
+
+    if tool_name == "alias_verify" {
+        let name: String = json_field_string(args, "name");
+        let target: String = json_field_string(args, "target");
+        let name_valid: Bool = is_valid_alias_name(name);
+        let safe_target: Bool = is_safe_target(target);
+        let cyclic: Bool = check_cyclic(name, target);
+        let ok: Bool = name_valid && safe_target && !cyclic;
+        let out: String = "{\"name\":\"" + name + "\",\"valid\":" + (if ok { "true" } else { "false" })
+            + ",\"cyclic\":" + (if cyclic { "true" } else { "false" }) + "}";
+        return build_tool_result(id, out);
+    }
+
+    return build_error(id, -32601, "unknown tool: " + tool_name);
+}
+
+fn handle_mcp_request(fs: &FsReadCap, req: String) -> String {
+    let method: String = json_field_string(req, "method");
+    let raw_id: String = json_field_raw(req, "id");
+    let id: String = if chars_len(raw_id) == 0 { "null" } else { raw_id };
+
+    if method == "initialize" {
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"ooalias\",\"version\":\"0.2.0\"}}}";
+    }
+    if method == "notifications/initialized" {
+        return "";
+    }
+    if method == "tools/list" {
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"tools\":[{\"name\":\"alias_resolve\",\"description\":\"Expand command prefix against sovereign alias catalog\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}},{\"name\":\"alias_list\",\"description\":\"List all registered command macros and expansion targets\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}}},{\"name\":\"alias_verify\",\"description\":\"Validate alias identifier safety and check recursion cycles\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"target\":{\"type\":\"string\"}},\"required\":[\"name\",\"target\"]}}]}}";
+    }
+    if method == "tools/call" {
+        return handle_tool_call(fs, id, req);
+    }
+    if method == "shutdown" {
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":null}";
+    }
+    return build_error(id, -32601, "method not found: " + method);
+}
+
+pub fn run_mcp_server(fs: &FsReadCap) -> Int {
+    let mut buf: String = "";
+    let mut running: Bool = true;
+    while running {
+        let mut nl: Int = str_index_of(buf, "\n");
+        while nl >= 0 {
+            let line: String = str_trim(str_slice(buf, 0, nl));
+            buf = str_slice(buf, nl + 1, chars_len(buf));
+            if chars_len(line) > 0 {
+                let resp: String = handle_mcp_request(fs, line);
+                if chars_len(resp) > 0 {
+                    println(resp);
+                }
+            }
+            nl = str_index_of(buf, "\n");
+        }
+
+        let cr: Result[String, String] = oo_read_stdin_chunk(fs, 100);
+        if !cr.is_ok() {
+            running = false;
+        } else {
+            let chunk: String = match cr { Ok(s) => s, Err(_) => "" };
+            if chars_len(chunk) == 0 {
+                running = false;
+            } else {
+                buf = buf + chunk;
+            }
+        }
+    }
+    return 0;
+}

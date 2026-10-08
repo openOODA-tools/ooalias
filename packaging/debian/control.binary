@@ -1,0 +1,9 @@
+Package: ooalias
+Version: 0.2.0-1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: openOODA-tools <ops@openooda.org>
+Description: Command macro and alias resolver with scope isolation
+ A sovereign command macro and alias resolver written in pure openOODA, featuring
+ zero ambient authority, cycle detection, oote color themes, and an MCP stdio server.

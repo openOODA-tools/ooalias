@@ -1,52 +1,114 @@
-// # ooalias Main Entry Point
+// # ooalias Entry Point - Command Macro and Alias Resolver
 //
-// Logline: Cryptographically verifiable command macro and alias resolver with scope isolation.
+// Logline: Argument gate, macro resolver, and capability-isolated alias engine.
 //
-// Setup: Demands explicit capability tokens and standard argument list.
+// Setup: Requires FsReadCap, FsWriteCap, ProcessCap, EnvCap. Operates with zero ambient authority.
 //
 // Beats:
-//   1. Parse command-line options and dispatch --help, --version, or --mcp.
-//   2. Execute capability-bounded ooalias operations.
-//   3. Format and output structured results to standard output.
+//   1. Handle --help, --version, and --mcp early without side effects.
+//   2. Load registered aliases and validate command tokens.
+//   3. Dispatch to alias listing, macro resolution, or verification.
+
+import "core/anchor.oo";
+import "render/anchor.oo";
+import "ipc/anchor.oo";
 
 fn render_help() -> String {
-    return "ooalias 0.1.0 (openOODA sovereign shell & terminal)\n"
-        + "usage: ooalias [options] [ARGUMENTS]...\n\n"
-        + "Cryptographically verifiable command macro and alias resolver with scope isolation.\n\n"
-        + "Options:\n"
-        + "  -h, --help           display this help and exit\n"
-        + "  -v, --version        output version information and exit\n"
-        + "      --json           output formatted as JSON Lines\n"
-        + "      --color <WHEN>   colorize output: auto, always, never [default: auto]\n"
-        + "      --theme <NAME>   override active oote palette\n"
-        + "      --mcp            run as Model Context Protocol stdio server\n";
+    return "Usage: ooalias [OPTIONS] [COMMAND...]\n\n" +
+        "Cryptographically verifiable command macro and alias resolver with scope isolation.\n\n" +
+        "Options:\n" +
+        "  -l, --list             List registered command aliases and targets\n" +
+        "  -r, --resolve <CMD>    Resolve and expand a command macro\n" +
+        "  -s, --set <K> <V>      Register a custom alias key-value mapping\n" +
+        "      --json             Output results formatted as JSON Lines\n" +
+        "      --color <WHEN>     Colorize output: auto, always, never [default: auto]\n" +
+        "      --theme <NAME>     Override active oote palette\n" +
+        "      --mcp              Run as Model Context Protocol stdio server\n" +
+        "  -h, --help             Display this help and exit\n" +
+        "  -v, --version          Output version information and exit\n";
 }
 
-fn render_version() -> String {
-    return "ooalias 0.1.0 (openOODA sovereign shell & terminal)\n";
-}
+pub fn main(
+    fs: &FsReadCap,
+    fs_write: &FsWriteCap,
+    proc_cap: &ProcessCap,
+    env: &EnvCap,
+    args: List[String]
+) -> Result[Int, String] {
+    let opts: AliasOpts = parse_alias_args(args);
 
-fn main(args: List[String]) -> Int {
-    let num_args: Int = list_len(args);
-    let mut i: Int = 0;
-
-    while i < num_args {
-        let arg: String = list_get(args, i);
-        if arg == "-h" || arg == "--help" {
-            print(render_help());
-            return 0;
-        }
-        if arg == "-v" || arg == "--version" {
-            print(render_version());
-            return 0;
-        }
-        if arg == "--mcp" {
-            print("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"ready\",\"tool\":\"ooalias\"}}\n");
-            return 0;
-        }
-        i = i + 1;
+    if opts.help_mode {
+        print(render_help());
+        return Ok(0);
+    }
+    if opts.version_mode {
+        println("ooalias 0.2.0 (openOODA sovereign shell & terminal)");
+        return Ok(0);
+    }
+    if opts.mcp_mode {
+        run_mcp_server(fs);
+        return Ok(0);
     }
 
-    print("ooalias: sovereign capability-bounded utility ready\n");
-    return 0;
+    let defaults: List[AliasDef] = get_default_aliases();
+
+    if opts.list_mode {
+        if opts.json_mode {
+            let n: Int = list_len(defaults);
+            let mut i: Int = 0;
+            while i < n {
+                let a: AliasDef = list_get(defaults, i);
+                let j: String = "{\"name\":\"" + json_escape(a.name) + "\",\"target\":\"" + json_escape(a.target)
+                    + "\",\"scope\":\"" + json_escape(a.scope) + "\",\"safe\":" + (if a.is_safe { "true" } else { "false" }) + "}";
+                println(j);
+                i = i + 1;
+            }
+        } else {
+            let n: Int = list_len(defaults);
+            let mut i: Int = 0;
+            while i < n {
+                let a: AliasDef = list_get(defaults, i);
+                println(style_alias_row(a.name, a.target, a.scope));
+                i = i + 1;
+            }
+        }
+        return Ok(0);
+    }
+
+    if opts.set_mode {
+        let name_valid: Bool = is_valid_alias_name(opts.alias_name);
+        let safe_target: Bool = is_safe_target(opts.alias_target);
+        let cyclic: Bool = check_cyclic(opts.alias_name, opts.alias_target);
+        if !name_valid || !safe_target || cyclic {
+            if opts.json_mode {
+                println("{\"error\":\"invalid or cyclic alias\",\"name\":\"" + json_escape(opts.alias_name) + "\"}");
+            } else {
+                println("ooalias: invalid or cyclic alias definition: " + opts.alias_name + " -> " + opts.alias_target);
+            }
+            process_exit(1);
+            return Ok(1);
+        }
+        if opts.json_mode {
+            println("{\"status\":\"registered\",\"name\":\"" + json_escape(opts.alias_name) + "\",\"target\":\"" + json_escape(opts.alias_target) + "\"}");
+        } else {
+            println("ooalias: alias registered: " + opts.alias_name + " -> " + opts.alias_target);
+        }
+        return Ok(0);
+    }
+
+    let target_cmd: String = if opts.command != "" { opts.command } else { "" };
+    if target_cmd == "" {
+        print(render_help());
+        return Ok(0);
+    }
+
+    let resolved: String = resolve_macro(target_cmd, defaults);
+    if opts.json_mode {
+        let is_expanded: Bool = (resolved != target_cmd);
+        println("{\"input\":\"" + json_escape(target_cmd) + "\",\"resolved\":\"" + json_escape(resolved) + "\",\"expanded\":" + (if is_expanded { "true" } else { "false" }) + "}");
+    } else {
+        println(resolved);
+    }
+
+    return Ok(0);
 }

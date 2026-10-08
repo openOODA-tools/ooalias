@@ -1,0 +1,88 @@
+// # ooalias Options - Command Line Flags and Operational Configuration
+//
+// Logline: Decodes command line arguments into operational modes for ooalias.
+//
+// Setup: Pure value type and parser. Zero ambient authority.
+//
+// Beats:
+//   1. Define AliasOpts struct holding action mode, command targets, and flags.
+//   2. Provide safe default initializer.
+//   3. Parse argument vector into validated AliasOpts model.
+
+pub type AliasOpts = struct {
+    list_mode: Bool,
+    resolve_mode: Bool,
+    set_mode: Bool,
+    command: String,
+    alias_name: String,
+    alias_target: String,
+    json_mode: Bool,
+    mcp_mode: Bool,
+    help_mode: Bool,
+    version_mode: Bool,
+    theme: String,
+    color: String,
+    error_msg: String
+};
+
+pub fn alias_opts_default() -> AliasOpts {
+    return AliasOpts {
+        list_mode: false,
+        resolve_mode: false,
+        set_mode: false,
+        command: "",
+        alias_name: "",
+        alias_target: "",
+        json_mode: false,
+        mcp_mode: false,
+        help_mode: false,
+        version_mode: false,
+        theme: "",
+        color: "auto",
+        error_msg: ""
+    };
+}
+
+pub fn parse_alias_args(args: List[String]) -> AliasOpts {
+    let mut opts: AliasOpts = alias_opts_default();
+    let n: Int = list_len(args);
+    let mut i: Int = 0;
+    while i < n {
+        let arg: String = list_get(args, i);
+        if arg == "-h" || arg == "--help" {
+            opts.help_mode = true;
+            return opts;
+        } else if arg == "-v" || arg == "--version" {
+            opts.version_mode = true;
+            return opts;
+        } else if arg == "--mcp" {
+            opts.mcp_mode = true;
+        } else if arg == "--json" {
+            opts.json_mode = true;
+        } else if arg == "-l" || arg == "--list" || arg == "list" {
+            opts.list_mode = true;
+        } else if arg == "-r" || arg == "--resolve" || arg == "resolve" {
+            opts.resolve_mode = true;
+            i = i + 1;
+            if i < n { opts.command = list_get(args, i); }
+        } else if arg == "-s" || arg == "--set" || arg == "set" {
+            opts.set_mode = true;
+            i = i + 1;
+            if i < n { opts.alias_name = list_get(args, i); }
+            i = i + 1;
+            if i < n { opts.alias_target = list_get(args, i); }
+        } else if arg == "--theme" {
+            i = i + 1;
+            if i < n { opts.theme = list_get(args, i); }
+        } else if arg == "--color" {
+            i = i + 1;
+            if i < n { opts.color = list_get(args, i); }
+        } else if !str_starts_with(arg, "-") {
+            if opts.command == "" {
+                opts.command = arg;
+            }
+        }
+        i = i + 1;
+    }
+    return opts;
+}

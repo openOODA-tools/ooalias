@@ -1,0 +1,12 @@
+// # ooalias Core Subsystem Anchor
+//
+// Logline: Re-exports alias models, name validators, and expansion engines.
+//
+// Setup: Pure shim re-exporting core resolution primitives.
+//
+// Beats:
+//   1. Re-export AliasDef and validation functions.
+//   2. Re-export resolve_macro and format_alias_table routines.
+
+import "alias_entry.oo";
+import "resolver.oo";

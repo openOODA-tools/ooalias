@@ -1,0 +1,72 @@
+// # Command Macro Resolver and Chain Expander
+//
+// Logline: Resolves command prefixes against registered aliases with recursion protection.
+//
+// Setup: Pure expansion engine. Evaluates bounded transformations without ambient IO.
+//
+// Beats:
+//   1. Maintain standard sovereign alias catalog for openOODA toolchain.
+//   2. Split command tokens and match alias identifiers against first word.
+//   3. Expand macro targets and concatenate arguments safely.
+
+import "alias_entry.oo";
+
+pub fn get_default_aliases() -> List[AliasDef] {
+    let mut list: List[AliasDef] = list_new();
+    list = list_push(list, create_alias("g", "git", "global"));
+    list = list_push(list, create_alias("ll", "ools -la", "global"));
+    list = list_push(list, create_alias("la", "ools -a", "global"));
+    list = list_push(list, create_alias("cat", "oocat", "global"));
+    list = list_push(list, create_alias("grep", "oogrep", "global"));
+    list = list_push(list, create_alias("tree", "ootree", "global"));
+    list = list_push(list, create_alias("diff", "oodiff -u", "global"));
+    list = list_push(list, create_alias("clock", "ooclock", "global"));
+    list = list_push(list, create_alias("watch", "oowatch", "global"));
+    list = list_push(list, create_alias("top", "ootop", "global"));
+    list = list_push(list, create_alias("ps", "oops", "global"));
+    return list;
+}
+
+pub fn find_alias(name: String, aliases: List[AliasDef]) -> AliasDef {
+    let n: Int = list_len(aliases);
+    let mut i: Int = 0;
+    while i < n {
+        let a: AliasDef = list_get(aliases, i);
+        if a.name == name {
+            return a;
+        }
+        i = i + 1;
+    }
+    return AliasDef { name: "", target: "", scope: "", is_safe: false };
+}
+
+pub fn resolve_macro(cmd: String, aliases: List[AliasDef]) -> String {
+    let trimmed: String = str_trim(cmd);
+    if chars_len(trimmed) == 0 { return ""; }
+
+    let space_idx: Int = str_index_of(trimmed, " ");
+    let first_word: String = if space_idx >= 0 { str_slice(trimmed, 0, space_idx) } else { trimmed };
+    let rest_args: String = if space_idx >= 0 { str_slice(trimmed, space_idx, chars_len(trimmed)) } else { "" };
+
+    let found: AliasDef = find_alias(first_word, aliases);
+    if found.name != "" && found.is_safe {
+        if check_cyclic(first_word, found.target) {
+            return found.target + rest_args;
+        }
+        return found.target + rest_args;
+    }
+
+    return trimmed;
+}
+
+pub fn format_alias_table(aliases: List[AliasDef]) -> String {
+    let mut out: String = "NAME\tSCOPE\tTARGET\n";
+    let n: Int = list_len(aliases);
+    let mut i: Int = 0;
+    while i < n {
+        let a: AliasDef = list_get(aliases, i);
+        out = out + a.name + "\t" + a.scope + "\t" + a.target + "\n";
+        i = i + 1;
+    }
+    return out;
+}
